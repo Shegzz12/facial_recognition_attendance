@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Dashboard</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="container container-wide">
+    <a class="back-link" href="/static/index.html">← Back to student portal</a>
+
+    <header>
+      <h1>Admin Dashboard</h1>
+      <p>Manage departments and courses — levels 100L to 500L are created automatically per department</p>
+    </header>
+
+    <div class="admin-grid">
+      <div class="card">
+        <h2>Add Department</h2>
+        <form id="add-dept-form">
+          <div class="field">
+            <label for="dept_name">Department name</label>
+            <input id="dept_name" type="text" required placeholder="Electrical Engineering" />
+          </div>
+          <div class="field">
+            <label for="dept_code">Code (optional)</label>
+            <input id="dept_code" type="text" placeholder="EEE" />
+          </div>
+          <button type="submit" class="btn btn-primary">Create department</button>
+        </form>
+        <p class="hint">100 Level through 500 Level are added automatically.</p>
+        <div id="dept-status" class="status"></div>
+      </div>
+
+      <div class="card">
+        <h2>Add Courses</h2>
+        <form id="add-course-form">
+          <div class="field">
+            <label for="course_dept">Department</label>
+            <select id="course_dept" required>
+              <option value="">— Select department —</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="course_level">Level</label>
+            <select id="course_level" required disabled>
+              <option value="">— Select level —</option>
+            </select>
+          </div>
+          <p class="hint pinned-context" id="course-context-hint">
+            Pick department and level once, then keep adding courses below.
+          </p>
+          <div class="field">
+            <label for="course_code">Course code</label>
+            <input id="course_code" type="text" required placeholder="EEE101" />
+          </div>
+          <div class="field">
+            <label for="course_name">Course name</label>
+            <input id="course_name" type="text" required placeholder="Intro to Electrical Engineering" />
+          </div>
+          <div class="field">
+            <label for="course_lecturer">Lecturer (optional)</label>
+            <input id="course_lecturer" type="text" placeholder="Dr. Adeyemi" />
+          </div>
+          <button type="submit" class="btn btn-primary">Add course</button>
+        </form>
+        <div id="course-status" class="status"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Attendance</h2>
+      <p class="hint">
+        Start a live face-scanning session for a lecture. Students registered for the course
+        can mark attendance using dlib facial recognition.
+      </p>
+      <div class="attendance-actions">
+        <a class="btn btn-primary" href="/static/attendance-setup.html">Start attendance session</a>
+        <button type="button" class="btn btn-secondary" id="rebuild-embeddings-btn">
+          Rebuild face profiles
+        </button>
+      </div>
+      <div id="embeddings-status" class="status"></div>
+    </div>
+
+    <div class="card">
+      <h2>Overview</h2>
+      <div class="stats-row stats-row-4">
+        <div class="stat-box">
+          <span class="stat-value" id="stat-departments">—</span>
+          <span class="stat-label">Departments</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-value" id="stat-levels">—</span>
+          <span class="stat-label">Levels</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-value" id="stat-courses">—</span>
+          <span class="stat-label">Courses</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-value" id="stat-enrollments">—</span>
+          <span class="stat-label">Enrollments</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-head">
+        <h2>Courses by Department &amp; Level</h2>
+        <div class="filter-row">
+          <select id="filter-dept">
+            <option value="">All departments</option>
+          </select>
+          <select id="filter-level" disabled>
+            <option value="">All levels</option>
+          </select>
+          <button type="button" class="btn btn-secondary" id="refresh-btn">Refresh</button>
+        </div>
+      </div>
+      <div id="courses-panel">
+        <p class="empty">Loading courses…</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/admin.js"></script>
+</body>
+</html>
