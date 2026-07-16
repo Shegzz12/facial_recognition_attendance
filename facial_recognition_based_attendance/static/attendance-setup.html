@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Start Attendance Session</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="container">
+    <a class="back-link" href="/static/admin.html">← Back to admin dashboard</a>
+
+    <header>
+      <h1>Attendance Session</h1>
+      <p>Select the course lecture students will mark attendance for</p>
+    </header>
+
+    <div class="card">
+      <h2>Select Course</h2>
+
+      <div class="grid-2">
+        <div class="field">
+          <label for="department-select">Department</label>
+          <select id="department-select">
+            <option value="">— Select department —</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="level-select">Level</label>
+          <select id="level-select" disabled>
+            <option value="">— Select level —</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="course-select">Course</label>
+        <select id="course-select" disabled>
+          <option value="">— Select course —</option>
+        </select>
+      </div>
+
+      <div id="session-preview" class="session-preview hidden">
+        <div class="stats-row stats-row-3">
+          <div class="stat-box">
+            <span class="stat-value" id="preview-enrolled">—</span>
+            <span class="stat-label">Enrolled</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-value" id="preview-faces">—</span>
+            <span class="stat-label">With face data</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-value" id="preview-marked">—</span>
+            <span class="stat-label">Marked today</span>
+          </div>
+        </div>
+        <p class="hint" id="dlib-status"></p>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn btn-primary" id="start-btn" disabled>
+          Start face scanning session
+        </button>
+      </div>
+
+      <div id="setup-status" class="status"></div>
+    </div>
+  </div>
+
+  <script src="/static/js/attendance-setup.js"></script>
+</body>
+</html>
