@@ -119,6 +119,34 @@ pi-ready-package/
 └── README_PI.md
 ```
 
+## Buzzer (audible scan feedback)
+
+Wiring for an active buzzer module (default pin, BCM numbering):
+
+| Buzzer pin | Pi pin |
+|---|---|
+| VCC / + | Pin 2 (5V) — or 3V3 for 3.3V modules |
+| GND / - | Pin 9 (GND) |
+| I/O / S | Pin 12 (GPIO18) |
+
+Behaviour:
+- Attendance marked → 3 short beeps, then silence
+- Card/face not recognized, or mark failed → one 5-second beep, then silence
+- Duplicate (already marked today) → repeating beeps that keep going until the
+  card is taken off the reader / the face leaves the camera
+
+Optional environment overrides:
+
+```bash
+export BUZZER_GPIO_PIN=18            # BCM pin the buzzer is wired to
+export BUZZER_ACTIVE_HIGH=1          # 0 if the module sounds when pulled LOW
+export BUZZER_ENABLED=1              # 0 disables the buzzer entirely
+export BUZZER_ERROR_SECONDS=5.0      # length of the "not recognized" beep
+export CARD_ABSENCE_GRACE_SECONDS=1.0   # card must be gone this long to count as removed
+export FACE_ABSENCE_GRACE_SECONDS=2.0   # face must be gone this long to count as removed
+export ALERT_DUPLICATE_AFTER_MARK=0     # 1 = also alarm at the student just marked
+```
+
 ## System Requirements
 
 - Raspberry Pi 4 (recommended) with 4GB+ RAM
