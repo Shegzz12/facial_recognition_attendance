@@ -17,11 +17,12 @@ from app.services.attendance_matcher import mark_attendance_for_match
 from app.services.lcd_display import (
     lcd_idle,
     lcd_scanning,
-    lcd_not_recognized,
     lcd_marked,
     lcd_already_marked,
     lcd_error,
+    lcd_card_not_recognized,
 )
+from app.services import buzzer
 
 try:
     from mfrc522 import SimpleMFRC522
@@ -40,6 +41,16 @@ MARK_LINGER_SECONDS = float(os.environ.get("LCD_MARK_LINGER_SECONDS", "4.0"))
 
 # Delay between RFID reads to avoid spamming the same card
 READ_DELAY_SECONDS = 2.0
+
+# How often the reader is polled for card presence.
+POLL_INTERVAL_SECONDS = float(os.environ.get("RFID_POLL_INTERVAL_SECONDS", "0.25"))
+
+# A card has to be off the reader for this long before it counts as "removed"
+# and the held alert is released — the RC522 drops the odd read even when the
+# card hasn't actually moved.
+CARD_ABSENCE_GRACE_SECONDS = float(os.environ.get("CARD_ABSENCE_GRACE_SECONDS", "1.0"))
+
+BUZZER_OWNER = "rfid"
 
 _control_lock = threading.Lock()
 _state = {
@@ -107,77 +118,127 @@ def _scan_loop(course_id: str, course_code: str, stop_event: threading.Event) ->
         # None = LCD is already showing the scanning message, nothing pending.
         lcd_reset_at: float | None = None
 
+        # Presence tracking. An "episode" is one continuous presentation of one
+        # card on the reader. Alerts (LCD + buzzer) are raised once per episode
+        # and then held until the card is taken away — take it away and present
+        # it again and the alert fires again.
+        episode_uid: str | None = None
+        episode_kind: str | None = None  # marked | duplicate | unknown | failed
+        episode_name: str | None = None
+        last_seen_at = 0.0
+
         _state["last_message"] = "RFID scanner ready. Hold card near reader..."
 
         while not stop_event.is_set():
             now = time.monotonic()
 
-            # Revert the LCD once its hold time has elapsed
-            if lcd_reset_at is not None and now >= lcd_reset_at:
-                lcd_scanning()
-                lcd_reset_at = None
-
             try:
-                # Read card - this blocks until a card is detected
-                id_num, _ = reader.read()
-                
-                # Convert to hex string (uppercase, without '0x' prefix)
-                hex_uid = hex(id_num)[2:].upper()
-                
-                # Check if this is the same card as last read (avoid duplicates)
-                if _state["last_hex_uid"] == hex_uid:
-                    time.sleep(READ_DELAY_SECONDS)
-                    continue
-
-                _state["last_hex_uid"] = hex_uid
-
-                # Look up student by RFID
-                student = _get_student_by_rfid(hex_uid)
-                
-                if not student:
-                    lcd_not_recognized()
-                    _state["last_message"] = "RFID card not registered."
-                    lcd_reset_at = now + RESULT_DISPLAY_SECONDS
-                    time.sleep(READ_DELAY_SECONDS)
-                    continue
-
-                # Mark attendance
-                session_date = time.strftime("%Y-%m-%d")
-                created, status = mark_attendance_for_match(
-                    course_id, student["matric_no"], session_date, source="rfid"
-                )
-
-                if status == "already_marked":
-                    lcd_already_marked(student["full_name"])
-                    _state["last_message"] = f"{student['full_name']} already marked."
-                    lcd_reset_at = now + MARK_LINGER_SECONDS
-                elif created:
-                    lcd_marked(student["full_name"])
-                    _state["last_message"] = f"{student['full_name']} marked present via RFID."
-                    _state["marks_this_session"] += 1
-                    lcd_reset_at = now + MARK_LINGER_SECONDS
-                else:
-                    lcd_error("Mark Failed")
-                    _state["last_message"] = f"Could not mark attendance: {status}"
-                    lcd_reset_at = now + RESULT_DISPLAY_SECONDS
-
-                _state["last_matric"] = student["matric_no"]
-                
-                # Delay to avoid reading the same card multiple times
-                time.sleep(READ_DELAY_SECONDS)
-
+                # Non-blocking read so we can tell when the card is taken away.
+                id_num = reader.read_id_no_block()
             except Exception as exc:
                 _state["error"] = str(exc)
                 lcd_error("RFID Error")
                 lcd_reset_at = now + RESULT_DISPLAY_SECONDS
                 _state["last_message"] = f"RFID error: {str(exc)}"
+                buzzer.stop(BUZZER_OWNER)
+                episode_uid = episode_kind = episode_name = None
                 time.sleep(READ_DELAY_SECONDS)
                 continue
+
+            if id_num is None:
+                # No card on the reader. Release any held alert once the card
+                # has been gone long enough.
+                if episode_uid is not None and now - last_seen_at >= CARD_ABSENCE_GRACE_SECONDS:
+                    episode_uid = episode_kind = episode_name = None
+                    buzzer.stop(BUZZER_OWNER)
+                    lcd_scanning()
+                    lcd_reset_at = None
+                elif lcd_reset_at is not None and now >= lcd_reset_at:
+                    lcd_scanning()
+                    lcd_reset_at = None
+                time.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
+            hex_uid = hex(id_num)[2:].upper()
+            last_seen_at = now
+            new_episode = hex_uid != episode_uid
+            if new_episode:
+                buzzer.stop(BUZZER_OWNER)
+                episode_uid = hex_uid
+                episode_kind = None
+                episode_name = None
+                _state["last_hex_uid"] = hex_uid
+
+            # ---- Held alerts: keep showing/sounding while the card stays on ----
+            if episode_kind == "duplicate":
+                lcd_already_marked(episode_name)
+                buzzer.alarm(BUZZER_OWNER)
+                time.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
+            if episode_kind == "unknown":
+                # Keep re-showing it for as long as the card is held there; the
+                # 5s buzz only fires once per presentation.
+                lcd_card_not_recognized()
+                time.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
+            if episode_kind in ("marked", "failed"):
+                if lcd_reset_at is not None and now >= lcd_reset_at:
+                    lcd_scanning()
+                    lcd_reset_at = None
+                time.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
+            # ---- First read of this presentation ----
+            student = _get_student_by_rfid(hex_uid)
+
+            if not student:
+                # An unknown *card* — not an unknown face. (This used to show
+                # "Face Not Recognized" on the LCD.)
+                lcd_card_not_recognized()
+                _state["last_message"] = "RFID card not registered."
+                lcd_reset_at = None
+                buzzer.beep_error(BUZZER_OWNER)
+                episode_kind = "unknown"
+                time.sleep(POLL_INTERVAL_SECONDS)
+                continue
+
+            episode_name = student["full_name"]
+
+            session_date = time.strftime("%Y-%m-%d")
+            created, status = mark_attendance_for_match(
+                course_id, student["matric_no"], session_date, source="rfid"
+            )
+
+            if status == "already_marked":
+                lcd_already_marked(student["full_name"])
+                _state["last_message"] = f"{student['full_name']} already marked."
+                lcd_reset_at = None
+                buzzer.alarm(BUZZER_OWNER)
+                episode_kind = "duplicate"
+            elif created:
+                lcd_marked(student["full_name"])
+                _state["last_message"] = f"{student['full_name']} marked present via RFID."
+                _state["marks_this_session"] += 1
+                lcd_reset_at = now + MARK_LINGER_SECONDS
+                buzzer.beep_success(BUZZER_OWNER)
+                episode_kind = "marked"
+            else:
+                lcd_error("Mark Failed")
+                _state["last_message"] = f"Could not mark attendance: {status}"
+                lcd_reset_at = now + RESULT_DISPLAY_SECONDS
+                buzzer.beep_error(BUZZER_OWNER)
+                episode_kind = "failed"
+
+            _state["last_matric"] = student["matric_no"]
+            time.sleep(POLL_INTERVAL_SECONDS)
 
     except Exception as exc:  # pragma: no cover - hardware-dependent
         _state["error"] = str(exc)
         lcd_error("RFID Init Error")
     finally:
+        buzzer.stop(BUZZER_OWNER)
         try:
             if reader:
                 # Clean up reader if needed
@@ -268,6 +329,7 @@ def get_status() -> dict:
             "marks_this_session": _state["marks_this_session"],
             "error": _state["error"],
             "rfid_available": RFID_AVAILABLE,
+            "buzzer_available": buzzer.BUZZER_AVAILABLE,
         }
 
 

@@ -35,6 +35,7 @@ from app.services.lcd_display import (
     lcd_already_marked,
     lcd_error,
 )
+from app.services import buzzer
 
 try:
     from picamera2 import Picamera2
@@ -55,6 +56,25 @@ RESULT_DISPLAY_SECONDS = 2.0
 # How long "Attendance Mark" / "Duplicate Mark" lingers — deliberately longer
 # so it's actually readable on the physical LCD, per request (4+ seconds).
 MARK_LINGER_SECONDS = float(os.environ.get("LCD_MARK_LINGER_SECONDS", "4.0"))
+
+# A face has to be missing for this long before we treat it as "removed" and
+# clear the current alert — a single dropped detection shouldn't cancel it.
+FACE_ABSENCE_GRACE_SECONDS = float(os.environ.get("FACE_ABSENCE_GRACE_SECONDS", "2.0"))
+
+# Set to 1 to also raise the duplicate alert for the student who was *just*
+# marked while they're still standing in front of the camera. Off by default so
+# a successful mark isn't immediately followed by the duplicate alarm.
+ALERT_DUPLICATE_AFTER_MARK = os.environ.get("ALERT_DUPLICATE_AFTER_MARK", "0") not in (
+    "0",
+    "false",
+    "False",
+)
+
+BUZZER_OWNER = "camera"
+
+# Alerts that persist stay on screen until the face is removed, so their banner
+# is simply given a far-future expiry and cleared explicitly.
+_PERSISTENT_BANNER_SECONDS = 3600.0
 
 PREVIEW_JPEG_QUALITY = 70
 
@@ -150,6 +170,19 @@ def _scan_loop(course_id: str, course_code: str, stop_event: threading.Event) ->
         # None = LCD is already showing the scanning message, nothing pending.
         lcd_reset_at: float | None = None
 
+        # Presence tracking. An "episode" is one continuous appearance of one
+        # subject in front of the camera: the same student, or the same
+        # unrecognized face. Alerts (LCD + buzzer) are raised once per episode
+        # and then held until the face is removed — remove and present again
+        # and the alert fires again.
+        episode_key: str | None = None
+        episode_kind: str | None = None  # marked | duplicate | unknown | no_faces | failed
+        last_seen_at = 0.0
+
+        def end_episode() -> None:
+            buzzer.stop(BUZZER_OWNER)
+            lcd_scanning()
+
         next_scan_at = 0.0
 
         while not stop_event.is_set():
@@ -188,24 +221,78 @@ def _scan_loop(course_id: str, course_code: str, stop_event: threading.Event) ->
             if stop_event.is_set():
                 break
 
-            if not result.matched:
-                if result.reason == "no_face_detected":
-                    # Don't touch the LCD or banner for empty frames — this
-                    # happens constantly while no one is in front of the
-                    # camera, and flickering the display for it is just noise.
-                    _state["last_message"] = "No face detected."
-                    continue
-                elif result.reason == "no_enrolled_faces":
-                    lcd_error("No Faces Set")
-                    _state["last_message"] = "No enrolled faces with data for this course."
-                    banner_text, banner_color = "No enrolled face data for this course", _COLOR_ERROR
-                else:
-                    lcd_not_recognized()
-                    _state["last_message"] = "Face not recognized."
-                    banner_text, banner_color = "Face not recognized", _COLOR_ERROR
+            # ---- Who (if anyone) is currently in front of the camera? ----
+            if result.matched:
+                present_key = f"student:{result.matric_no}"
+            elif result.reason == "no_face_detected":
+                present_key = None
+            elif result.reason == "no_enrolled_faces":
+                present_key = "no_faces"
+            else:
+                present_key = "unknown"
 
-                lcd_reset_at = now + RESULT_DISPLAY_SECONDS
-                banner_until = now + RESULT_DISPLAY_SECONDS
+            if present_key is None:
+                # Don't touch the LCD or banner for empty frames — this happens
+                # constantly while no one is in front of the camera. Once the
+                # face has been gone long enough, any held alert is released.
+                _state["last_message"] = "No face detected."
+                if episode_key is not None and now - last_seen_at >= FACE_ABSENCE_GRACE_SECONDS:
+                    episode_key = None
+                    episode_kind = None
+                    end_episode()
+                    lcd_reset_at = None
+                    banner_text = None
+                    banner_until = 0.0
+                continue
+
+            last_seen_at = now
+            new_episode = present_key != episode_key
+            if new_episode:
+                buzzer.stop(BUZZER_OWNER)
+                episode_key = present_key
+                episode_kind = None
+
+            if present_key == "no_faces":
+                lcd_error("No Faces Set")
+                _state["last_message"] = "No enrolled faces with data for this course."
+                banner_text, banner_color = "No enrolled face data for this course", _COLOR_ERROR
+                banner_until = now + _PERSISTENT_BANNER_SECONDS
+                lcd_reset_at = None
+                if new_episode:
+                    buzzer.beep_error(BUZZER_OWNER)
+                episode_kind = "no_faces"
+                continue
+
+            if present_key == "unknown":
+                # Keep re-showing "not recognized" for as long as the face stays
+                # in front of the camera; the 5s buzz only fires once per
+                # appearance.
+                lcd_not_recognized()
+                _state["last_message"] = "Face not recognized."
+                banner_text, banner_color = "Face not recognized", _COLOR_ERROR
+                banner_until = now + _PERSISTENT_BANNER_SECONDS
+                lcd_reset_at = None
+                if new_episode:
+                    buzzer.beep_error(BUZZER_OWNER)
+                episode_kind = "unknown"
+                continue
+
+            # ---- A known student is in frame ----
+            _state["last_matric"] = result.matric_no
+
+            if episode_kind == "duplicate":
+                # Held duplicate alert: keep the name + "Duplicate Mark" on the
+                # LCD and the buzzer sounding until the face is removed.
+                lcd_already_marked(result.full_name)
+                banner_text = f"Already marked: {result.full_name}"
+                banner_color = _COLOR_INFO
+                banner_until = now + _PERSISTENT_BANNER_SECONDS
+                buzzer.alarm(BUZZER_OWNER)
+                continue
+
+            if episode_kind == "marked" and not ALERT_DUPLICATE_AFTER_MARK:
+                # Just marked and still standing there — stay quiet until they
+                # step away (set ALERT_DUPLICATE_AFTER_MARK=1 to alert instead).
                 continue
 
             created, status = mark_attendance_for_match(
@@ -216,8 +303,10 @@ def _scan_loop(course_id: str, course_code: str, stop_event: threading.Event) ->
                 lcd_already_marked(result.full_name)
                 _state["last_message"] = f"{result.full_name} already marked."
                 banner_text, banner_color = f"Already marked: {result.full_name}", _COLOR_INFO
-                lcd_reset_at = now + MARK_LINGER_SECONDS
-                banner_until = now + MARK_LINGER_SECONDS
+                banner_until = now + _PERSISTENT_BANNER_SECONDS
+                lcd_reset_at = None
+                buzzer.alarm(BUZZER_OWNER)
+                episode_kind = "duplicate"
             elif created:
                 lcd_marked(result.full_name)
                 _state["last_message"] = f"{result.full_name} marked present."
@@ -225,19 +314,22 @@ def _scan_loop(course_id: str, course_code: str, stop_event: threading.Event) ->
                 banner_text, banner_color = f"MARKED: {result.full_name}", _COLOR_SUCCESS
                 lcd_reset_at = now + MARK_LINGER_SECONDS
                 banner_until = now + MARK_LINGER_SECONDS
+                buzzer.beep_success(BUZZER_OWNER)
+                episode_kind = "marked"
             else:
                 lcd_error("Mark Failed")
                 _state["last_message"] = f"Could not mark attendance: {status}"
                 banner_text, banner_color = "Could not mark attendance", _COLOR_ERROR
-                lcd_reset_at = now + RESULT_DISPLAY_SECONDS
-                banner_until = now + RESULT_DISPLAY_SECONDS
-
-            _state["last_matric"] = result.matric_no
+                banner_until = now + _PERSISTENT_BANNER_SECONDS
+                lcd_reset_at = None
+                buzzer.beep_error(BUZZER_OWNER)
+                episode_kind = "failed"
 
     except Exception as exc:  # pragma: no cover - hardware-dependent
         _state["error"] = str(exc)
         lcd_error("camera error")
     finally:
+        buzzer.stop(BUZZER_OWNER)
         try:
             picam2.stop()
             picam2.close()
@@ -329,4 +421,5 @@ def get_status() -> dict:
             "marks_this_session": _state["marks_this_session"],
             "error": _state["error"],
             "picamera_available": PICAMERA_AVAILABLE,
+            "buzzer_available": buzzer.BUZZER_AVAILABLE,
         }
