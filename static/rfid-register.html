@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RFID Card Registration</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="container">
+    <a class="back-link" href="/static/index.html">← Back to course selection</a>
+
+    <header>
+      <h1>RFID Card Registration</h1>
+      <p>Register your RFID card to your student account</p>
+    </header>
+
+    <div class="card">
+      <h2>Register RFID Card</h2>
+      <form id="rfid-form">
+        <div class="field">
+          <label for="matric_no">Matric number</label>
+          <input id="matric_no" name="matric_no" type="text" required placeholder="CSC/2021/045" />
+        </div>
+
+        <p class="hint">
+          Enter your matric number above, then hold your RFID card near the reader to register it.
+          Only registered students can register RFID cards.
+        </p>
+
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="scan-btn">Start RFID Scan</button>
+          <button type="button" class="btn btn-secondary" id="stop-btn" style="display: none">Stop Scan</button>
+        </div>
+      </form>
+
+      <div id="status" class="status"></div>
+    </div>
+
+    <div class="card">
+      <h2>Registration Status</h2>
+      <div id="scan-status">
+        <p class="hint">RFID scanner is idle. Click "Start RFID Scan" to begin.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/rfid-register.js"></script>
+</body>
+</html>

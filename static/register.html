@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student Registration</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <div class="container">
+    <a class="back-link" href="/static/index.html">← Back to course selection</a>
+
+    <header>
+      <h1>Course Registration</h1>
+      <p id="course-label">Loading…</p>
+    </header>
+
+    <div class="register-layout">
+      <div class="card">
+        <h2>Your Details</h2>
+        <form id="register-form">
+          <input type="hidden" id="department_id" name="department_id" />
+          <input type="hidden" id="level_id" name="level_id" />
+
+          <div class="field">
+            <label for="full_name">Full name</label>
+            <input id="full_name" name="full_name" type="text" required placeholder="Aisha Bello" />
+          </div>
+
+          <div class="field">
+            <label for="matric_no">Matric number</label>
+            <input id="matric_no" name="matric_no" type="text" required placeholder="CSC/2021/045" />
+          </div>
+
+          <div class="field">
+            <label for="course-select">Courses to register for</label>
+            <select id="course-select" multiple size="6" required></select>
+            <p class="hint">Hold Ctrl (Windows) or Cmd (Mac) to select multiple courses.</p>
+          </div>
+
+          <p class="hint">
+            After filling your details and selecting courses, start face capture.
+            Keep your face centered and well lit for 10 seconds.
+          </p>
+
+          <div class="actions">
+            <button type="button" class="btn btn-primary" id="capture-btn">Start face capture (10s)</button>
+            <button type="submit" class="btn btn-primary" id="submit-btn" disabled>Submit registration</button>
+          </div>
+        </form>
+
+        <div class="progress-bar" id="progress-wrap" style="display: none">
+          <div class="progress-fill" id="progress-fill"></div>
+        </div>
+
+        <div id="status" class="status"></div>
+      </div>
+
+      <div class="card">
+        <h2>Webcam</h2>
+        <div class="video-wrap">
+          <video id="webcam" autoplay playsinline muted></video>
+          <div class="overlay hidden" id="overlay">
+            <div class="countdown" id="countdown">10</div>
+            <p style="color: white; margin: 0.5rem 0 0">Look at the camera</p>
+          </div>
+        </div>
+        <p class="hint" id="capture-hint">Camera permission is required. We capture several JPEG snapshots during the 10-second session.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/register.js"></script>
+</body>
+</html>
